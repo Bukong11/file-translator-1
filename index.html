@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>文件翻译上传页</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Microsoft YaHei", Arial, sans-serif;
+      color: #202124;
+      background: #eef2f7;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .app {
+      width: min(920px, 100%);
+      background: #fff;
+      border: 1px solid #d8dee7;
+      border-radius: 8px;
+      box-shadow: 0 18px 50px rgba(31, 41, 55, .12);
+      overflow: hidden;
+    }
+    header {
+      background: #101828;
+      color: #fff;
+      padding: 22px 24px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+    }
+    h1 { margin: 0 0 6px; font-size: 24px; }
+    header p { margin: 0; color: #cbd5e1; }
+    main {
+      padding: 24px;
+      display: grid;
+      gap: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    label {
+      display: grid;
+      gap: 7px;
+      font-weight: 700;
+      color: #344054;
+    }
+    input, select, textarea, button {
+      font: inherit;
+      border-radius: 8px;
+    }
+    input, select, textarea {
+      border: 1px solid #d8dee7;
+      padding: 11px;
+      min-height: 44px;
+    }
+    textarea {
+      min-height: 96px;
+      resize: vertical;
+    }
+    .wide { grid-column: 1 / -1; }
+    .actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 0;
+      background: #0f766e;
+      color: white;
+      padding: 12px 18px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    button:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+    }
+    .status {
+      padding: 13px 14px;
+      border-radius: 8px;
+      background: #f6f8fb;
+      color: #475467;
+      line-height: 1.5;
+    }
+    .hint {
+      color: #667085;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    @media (max-width: 720px) {
+      header, .grid { grid-template-columns: 1fr; }
+      header { display: grid; }
+      .wide { grid-column: auto; }
+    }
+  </style>
+  <script src="./config.js"></script>
+</head>
+<body>
+  <section class="app">
+    <header>
+      <div>
+        <h1 id="title">文件翻译上传页</h1>
+        <p id="subtitle">第二阶段雏形：上传 Word 或 Excel，后端处理后返回文件。</p>
+      </div>
+      <select id="uiLang" aria-label="界面语言">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
+    </header>
+
+    <main>
+      <form id="form">
+        <div class="grid">
+          <label class="wide">
+            <span id="fileLabel">选择文件（当前支持 .docx / .xlsx / 文本型 .pdf）</span>
+            <input id="file" name="file" type="file" accept=".docx,.xlsx,.pdf" required />
+          </label>
+
+          <label>
+            <span id="targetLabel">目标语言</span>
+            <select id="target_language" name="target_language">
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+              <option value="ms">Malay / 马来语</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="de">German</option>
+              <option value="fr">French</option>
+            </select>
+          </label>
+
+          <label>
+            <span id="domainLabel">专业领域</span>
+            <select id="domain" name="domain">
+              <option value="business">通用商务 / Business</option>
+              <option value="legal">法律合同 / Legal</option>
+              <option value="medical">医学药学 / Medical</option>
+              <option value="finance">金融审计 / Finance</option>
+              <option value="engineering">机械工程 / Engineering</option>
+              <option value="software">软件互联网 / Software</option>
+            </select>
+          </label>
+
+          <label>
+            <span id="pdfModeLabel">PDF 输出方式</span>
+            <select id="pdf_mode" name="pdf_mode">
+              <option value="overlay">专业版：尽量保留图纸版式 PDF</option>
+              <option value="docx">实用版：提取文字导出 Word</option>
+            </select>
+          </label>
+
+          <label class="wide">
+            <span id="termsLabel">术语要求</span>
+            <textarea id="terms" name="terms" placeholder="例如：interface 译为“接口”；APAC 保留英文。"></textarea>
+          </label>
+        </div>
+
+        <p class="hint" id="hint">当前后端使用“翻译占位文本”，目的是先跑通上传、处理、下载流程。接入真实翻译 API 后即可输出正式译文。</p>
+
+        <div class="actions">
+          <button id="submitBtn" type="submit">开始翻译</button>
+          <span class="status" id="status">等待上传文件</span>
+        </div>
+      </form>
+    </main>
+  </section>
+
+  <script>
+    const form = document.querySelector("#form");
+    const statusText = document.querySelector("#status");
+    const submitBtn = document.querySelector("#submitBtn");
+    const uiLang = document.querySelector("#uiLang");
+    const API_BASE_URL = window.FILE_TRANSLATOR_API_BASE_URL || "http://127.0.0.1:8001";
+
+    const copy = {
+      zh: {
+        title: "文件翻译上传页",
+        subtitle: "第二阶段雏形：上传 Word 或 Excel，后端处理后返回文件。",
+        fileLabel: "选择文件（当前支持 .docx / .xlsx / 文本型 .pdf）",
+        targetLabel: "目标语言",
+        domainLabel: "专业领域",
+        pdfModeLabel: "PDF 输出方式",
+        termsLabel: "术语要求",
+        hint: "如果后端设置了 OpenAI API Key，会进行真实翻译；PDF 会先提取文字并导出 Word，不保留原 PDF 版式。",
+        submitBtn: "开始翻译",
+        waiting: "等待上传文件",
+        working: "正在上传并处理文件...",
+        done: "处理完成，文件已开始下载。",
+        failed: "处理失败，请确认后端服务已启动，并且文件是 .docx、.xlsx 或文本型 .pdf。"
+      },
+      en: {
+        title: "File Translation Upload",
+        subtitle: "Stage 2 prototype: upload Word or Excel, process it on the backend, and download the result.",
+        fileLabel: "Choose a file (.docx / .xlsx / text-based .pdf)",
+        targetLabel: "Target Language",
+        domainLabel: "Professional Domain",
+        pdfModeLabel: "PDF Output Mode",
+        termsLabel: "Terminology Requirements",
+        hint: "If the backend has an OpenAI API key configured, it will translate for real. PDF files are converted to translated Word files and do not preserve the original PDF layout.",
+        submitBtn: "Start Translation",
+        waiting: "Waiting for a file",
+        working: "Uploading and processing the file...",
+        done: "Done. The processed file download has started.",
+        failed: "Processing failed. Make sure the backend is running and the file is .docx, .xlsx, or a text-based .pdf."
+      }
+    };
+
+    function applyLanguage(lang) {
+      const text = copy[lang];
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      Object.keys(text).forEach(key => {
+        const element = document.querySelector(`#${key}`);
+        if (element) element.textContent = text[key];
+      });
+      statusText.textContent = text.waiting;
+    }
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const lang = uiLang.value;
+      const text = copy[lang];
+      const data = new FormData(form);
+
+      submitBtn.disabled = true;
+      statusText.textContent = text.working;
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/translate`, {
+          method: "POST",
+          body: data
+        });
+
+        if (!response.ok) throw new Error("Request failed");
+
+        const blob = await response.blob();
+        const disposition = response.headers.get("content-disposition") || "";
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        const filename = match ? match[1] : "translated-file";
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        statusText.textContent = text.done;
+      } catch {
+        statusText.textContent = text.failed;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+
+    uiLang.addEventListener("change", () => applyLanguage(uiLang.value));
+    applyLanguage("zh");
+  </script>
+</body>
+</html>
