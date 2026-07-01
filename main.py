@@ -345,12 +345,21 @@ def should_translate_pdf_text(text: str) -> bool:
     return True
 
 
-def line_rotation(line: dict) -> int:
+def line_rotation(line: dict, rect: fitz.Rect) -> int:
+    if rect.width >= rect.height * 1.4:
+        return 0
+
     direction = line.get("dir") or (1, 0)
     angle = math.degrees(math.atan2(direction[1], direction[0]))
     angle = (angle + 360) % 360
     nearest = round(angle / 90) * 90
-    return nearest % 360
+    rotation = nearest % 360
+
+    if rotation == 180:
+        return 0
+    if rect.height >= rect.width * 1.4 and rotation in {90, 270}:
+        return rotation
+    return 0
 
 
 def fitted_font_size(rect: fitz.Rect, text: str, rotation: int = 0) -> float:
@@ -379,7 +388,7 @@ def translate_pdf_overlay(source: Path, target: Path, target_language: str, doma
                     continue
 
                 rect = fitz.Rect(line.get("bbox"))
-                rotation = line_rotation(line)
+                rotation = line_rotation(line, rect)
                 min_width = 5 if rotation in {90, 270} else 8
                 min_height = 8 if rotation in {90, 270} else 5
                 if rect.width < min_width or rect.height < min_height:
