@@ -265,12 +265,14 @@
         working: "正在上传并处理文件...",
         done: "处理完成，文件已开始下载。",
         failed: "处理失败，请确认后端服务已启动，并且文件是 .docx、.xlsx 或文本型 .pdf。",
+        failedWithReason: "处理失败：",
         progressReady: "准备上传",
         progressUploading: "上传文件中",
         progressProcessing: "翻译处理中",
         progressFinalizing: "生成下载文件",
         progressDone: "已完成",
         progressFailed: "处理未完成",
+        progressWaitingBackend: "后端仍在处理，大文件可能需要几分钟，请勿关闭页面",
         etaPrefix: "预计剩余",
         etaAlmost: "即将完成",
         etaDone: "已完成"
@@ -290,12 +292,14 @@
         working: "Uploading and processing the file...",
         done: "Done. The processed file download has started.",
         failed: "Processing failed. Make sure the backend is running and the file is .docx, .xlsx, or a text-based .pdf.",
+        failedWithReason: "Processing failed: ",
         progressReady: "Preparing upload",
         progressUploading: "Uploading file",
         progressProcessing: "Translating",
         progressFinalizing: "Creating download file",
         progressDone: "Completed",
         progressFailed: "Not completed",
+        progressWaitingBackend: "The backend is still processing. Large files may take several minutes. Keep this page open.",
         etaPrefix: "Estimated time left",
         etaAlmost: "Almost done",
         etaDone: "Done"
@@ -393,7 +397,10 @@
             ? text.progressProcessing
             : text.progressFinalizing;
 
-        setProgress(percent, stage, stage, `${text.etaPrefix}: ${formatDuration(remainingSeconds, lang)}`);
+        const etaText = percent >= 92
+          ? text.progressWaitingBackend
+          : `${text.etaPrefix}: ${formatDuration(remainingSeconds, lang)}`;
+        setProgress(percent, stage, stage, etaText);
       }, 500);
     }
 
@@ -427,7 +434,16 @@
           body: data
         });
 
-        if (!response.ok) throw new Error("Request failed");
+        if (!response.ok) {
+          let reason = "Request failed";
+          try {
+            const errorData = await response.json();
+            reason = errorData.detail || reason;
+          } catch {
+            reason = await response.text() || reason;
+          }
+          throw new Error(reason);
+        }
 
         const blob = await response.blob();
         const disposition = response.headers.get("content-disposition") || "";
@@ -456,8 +472,9 @@
         URL.revokeObjectURL(url);
         statusText.textContent = text.done;
         finishProgress(true, lang);
-      } catch {
-        statusText.textContent = text.failed;
+      } catch (error) {
+        const reason = error?.message ? `${text.failedWithReason}${error.message}` : text.failed;
+        statusText.textContent = reason;
         finishProgress(false, lang);
       } finally {
         submitBtn.disabled = false;
