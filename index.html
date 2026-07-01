@@ -89,6 +89,44 @@
       color: #475467;
       line-height: 1.5;
     }
+    .progress-area {
+      border: 1px solid #d8dee7;
+      border-radius: 8px;
+      padding: 14px;
+      background: #f8fafc;
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .progress-area[hidden] {
+      display: none;
+    }
+    .progress-header,
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: #475467;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .progress-title {
+      color: #1d2939;
+      font-weight: 700;
+    }
+    .progress-track {
+      height: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e4e7ec;
+    }
+    .progress-bar {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #0f766e, #2563eb);
+      transition: width .35s ease;
+    }
     .hint {
       color: #667085;
       font-size: 14px;
@@ -106,8 +144,8 @@
   <section class="app">
     <header>
       <div>
-        <h1 id="title">文件翻译上传页</h1>
-        <p id="subtitle">第二阶段雏形：上传 Word 或 Excel，后端处理后返回文件。</p>
+        <h1 id="title"></h1>
+        <p id="subtitle"></p>
       </div>
       <select id="uiLang" aria-label="界面语言">
         <option value="zh">中文</option>
@@ -119,54 +157,50 @@
       <form id="form">
         <div class="grid">
           <label class="wide">
-            <span id="fileLabel">选择文件（当前支持 .docx / .xlsx / 文本型 .pdf）</span>
+            <span id="fileLabel"></span>
             <input id="file" name="file" type="file" accept=".docx,.xlsx,.pdf" required />
           </label>
 
           <label>
-            <span id="targetLabel">目标语言</span>
-            <select id="target_language" name="target_language">
-              <option value="zh">中文</option>
-              <option value="en">English</option>
-              <option value="ms">Malay / 马来语</option>
-              <option value="ja">Japanese</option>
-              <option value="ko">Korean</option>
-              <option value="de">German</option>
-              <option value="fr">French</option>
-            </select>
+            <span id="targetLabel"></span>
+            <select id="target_language" name="target_language"></select>
           </label>
 
           <label>
-            <span id="domainLabel">专业领域</span>
-            <select id="domain" name="domain">
-              <option value="business">通用商务 / Business</option>
-              <option value="legal">法律合同 / Legal</option>
-              <option value="medical">医学药学 / Medical</option>
-              <option value="finance">金融审计 / Finance</option>
-              <option value="engineering">机械工程 / Engineering</option>
-              <option value="software">软件互联网 / Software</option>
-            </select>
+            <span id="domainLabel"></span>
+            <select id="domain" name="domain"></select>
           </label>
 
           <label>
-            <span id="pdfModeLabel">PDF 输出方式</span>
-            <select id="pdf_mode" name="pdf_mode">
-              <option value="overlay">专业版：尽量保留图纸版式 PDF</option>
-              <option value="docx">实用版：提取文字导出 Word</option>
-            </select>
+            <span id="pdfModeLabel"></span>
+            <select id="pdf_mode" name="pdf_mode"></select>
           </label>
 
           <label class="wide">
-            <span id="termsLabel">术语要求</span>
-            <textarea id="terms" name="terms" placeholder="例如：interface 译为“接口”；APAC 保留英文。"></textarea>
+            <span id="termsLabel"></span>
+            <textarea id="terms" name="terms"></textarea>
           </label>
         </div>
 
-        <p class="hint" id="hint">当前后端使用“翻译占位文本”，目的是先跑通上传、处理、下载流程。接入真实翻译 API 后即可输出正式译文。</p>
+        <p class="hint" id="hint"></p>
 
         <div class="actions">
-          <button id="submitBtn" type="submit">开始翻译</button>
-          <span class="status" id="status">等待上传文件</span>
+          <button id="submitBtn" type="submit"></button>
+          <span class="status" id="status"></span>
+        </div>
+
+        <div class="progress-area" id="progressArea" hidden>
+          <div class="progress-header">
+            <span class="progress-title" id="progressTitle"></span>
+            <span id="progressPercent">0%</span>
+          </div>
+          <div class="progress-track" aria-hidden="true">
+            <div class="progress-bar" id="progressBar"></div>
+          </div>
+          <div class="progress-meta">
+            <span id="progressDetail"></span>
+            <span id="progressEta"></span>
+          </div>
         </div>
       </form>
     </main>
@@ -177,49 +211,202 @@
     const statusText = document.querySelector("#status");
     const submitBtn = document.querySelector("#submitBtn");
     const uiLang = document.querySelector("#uiLang");
+    const fileInput = document.querySelector("#file");
+    const targetSelect = document.querySelector("#target_language");
+    const domainSelect = document.querySelector("#domain");
+    const pdfModeSelect = document.querySelector("#pdf_mode");
+    const termsInput = document.querySelector("#terms");
+    const progressArea = document.querySelector("#progressArea");
+    const progressTitle = document.querySelector("#progressTitle");
+    const progressPercent = document.querySelector("#progressPercent");
+    const progressBar = document.querySelector("#progressBar");
+    const progressDetail = document.querySelector("#progressDetail");
+    const progressEta = document.querySelector("#progressEta");
     const API_BASE_URL = window.FILE_TRANSLATOR_API_BASE_URL || "http://127.0.0.1:8001";
+    let progressTimer = null;
+
+    const options = {
+      languages: [
+        ["zh", { zh: "中文", en: "Chinese" }],
+        ["en", { zh: "英文", en: "English" }],
+        ["ms", { zh: "马来语", en: "Malay" }],
+        ["ja", { zh: "日文", en: "Japanese" }],
+        ["ko", { zh: "韩文", en: "Korean" }],
+        ["de", { zh: "德文", en: "German" }],
+        ["fr", { zh: "法文", en: "French" }]
+      ],
+      domains: [
+        ["business", { zh: "通用商务", en: "General Business" }],
+        ["legal", { zh: "法律合同", en: "Legal Contracts" }],
+        ["medical", { zh: "医学药学", en: "Medical and Pharmaceutical" }],
+        ["finance", { zh: "金融审计", en: "Finance and Audit" }],
+        ["engineering", { zh: "机械工程", en: "Mechanical Engineering" }],
+        ["software", { zh: "软件互联网", en: "Software and Internet" }]
+      ],
+      pdfModes: [
+        ["overlay", { zh: "专业版：尽量保留图纸版式 PDF", en: "Professional: Preserve drawing layout as PDF" }],
+        ["docx", { zh: "实用版：提取文字导出 Word", en: "Practical: Extract text and export Word" }]
+      ]
+    };
 
     const copy = {
       zh: {
         title: "文件翻译上传页",
-        subtitle: "第二阶段雏形：上传 Word 或 Excel，后端处理后返回文件。",
-        fileLabel: "选择文件（当前支持 .docx / .xlsx / 文本型 .pdf）",
+        subtitle: "上传 Word、Excel 或文本型 PDF，后端翻译后返回文件。",
+        fileLabel: "选择文件（支持 .docx / .xlsx / 文本型 .pdf）",
         targetLabel: "目标语言",
         domainLabel: "专业领域",
         pdfModeLabel: "PDF 输出方式",
         termsLabel: "术语要求",
-        hint: "如果后端设置了 OpenAI API Key，会进行真实翻译；PDF 会先提取文字并导出 Word，不保留原 PDF 版式。",
+        termsPlaceholder: "例如：interface 译为“接口”；APAC 保留英文；Part Number 保持英文。",
+        hint: "如果后端设置了 OpenAI API Key，会进行真实翻译；PDF 专业版会导出 PDF，实用版会导出 Word。",
         submitBtn: "开始翻译",
         waiting: "等待上传文件",
         working: "正在上传并处理文件...",
         done: "处理完成，文件已开始下载。",
-        failed: "处理失败，请确认后端服务已启动，并且文件是 .docx、.xlsx 或文本型 .pdf。"
+        failed: "处理失败，请确认后端服务已启动，并且文件是 .docx、.xlsx 或文本型 .pdf。",
+        progressReady: "准备上传",
+        progressUploading: "上传文件中",
+        progressProcessing: "翻译处理中",
+        progressFinalizing: "生成下载文件",
+        progressDone: "已完成",
+        progressFailed: "处理未完成",
+        etaPrefix: "预计剩余",
+        etaAlmost: "即将完成",
+        etaDone: "已完成"
       },
       en: {
         title: "File Translation Upload",
-        subtitle: "Stage 2 prototype: upload Word or Excel, process it on the backend, and download the result.",
+        subtitle: "Upload Word, Excel, or text-based PDF files. The backend translates and returns a downloadable file.",
         fileLabel: "Choose a file (.docx / .xlsx / text-based .pdf)",
         targetLabel: "Target Language",
         domainLabel: "Professional Domain",
         pdfModeLabel: "PDF Output Mode",
         termsLabel: "Terminology Requirements",
-        hint: "If the backend has an OpenAI API key configured, it will translate for real. PDF files are converted to translated Word files and do not preserve the original PDF layout.",
+        termsPlaceholder: "Example: keep APAC in English; keep Part Number in English; translate interface as port.",
+        hint: "If the backend has an OpenAI API key configured, it will translate for real. Professional PDF mode exports PDF; practical mode exports Word.",
         submitBtn: "Start Translation",
         waiting: "Waiting for a file",
         working: "Uploading and processing the file...",
         done: "Done. The processed file download has started.",
-        failed: "Processing failed. Make sure the backend is running and the file is .docx, .xlsx, or a text-based .pdf."
+        failed: "Processing failed. Make sure the backend is running and the file is .docx, .xlsx, or a text-based .pdf.",
+        progressReady: "Preparing upload",
+        progressUploading: "Uploading file",
+        progressProcessing: "Translating",
+        progressFinalizing: "Creating download file",
+        progressDone: "Completed",
+        progressFailed: "Not completed",
+        etaPrefix: "Estimated time left",
+        etaAlmost: "Almost done",
+        etaDone: "Done"
       }
     };
+
+    function renderOptions(select, items, lang) {
+      const selected = select.value;
+      select.innerHTML = "";
+      items.forEach(([value, labels]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = labels[lang];
+        select.appendChild(option);
+      });
+      if (selected) select.value = selected;
+    }
 
     function applyLanguage(lang) {
       const text = copy[lang];
       document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      document.title = text.title;
       Object.keys(text).forEach(key => {
         const element = document.querySelector(`#${key}`);
         if (element) element.textContent = text[key];
       });
-      statusText.textContent = text.waiting;
+      termsInput.placeholder = text.termsPlaceholder;
+      renderOptions(targetSelect, options.languages, lang);
+      renderOptions(domainSelect, options.domains, lang);
+      renderOptions(pdfModeSelect, options.pdfModes, lang);
+      if (!statusText.dataset.busy) statusText.textContent = text.waiting;
+    }
+
+    function estimateDurationSeconds(file, pdfMode) {
+      const sizeMb = file ? file.size / 1024 / 1024 : 1;
+      const name = file?.name.toLowerCase() || "";
+      let base = 28;
+      let perMb = 5;
+
+      if (name.endsWith(".pdf")) {
+        base = pdfMode === "overlay" ? 55 : 42;
+        perMb = pdfMode === "overlay" ? 10 : 7;
+      } else if (name.endsWith(".docx")) {
+        base = 32;
+        perMb = 6;
+      } else if (name.endsWith(".xlsx")) {
+        base = 26;
+        perMb = 5;
+      }
+
+      return Math.max(20, Math.min(300, Math.round(base + sizeMb * perMb)));
+    }
+
+    function formatDuration(seconds, lang) {
+      const safeSeconds = Math.max(0, Math.ceil(seconds));
+      if (safeSeconds < 5) return copy[lang].etaAlmost;
+      const minutes = Math.floor(safeSeconds / 60);
+      const remainder = safeSeconds % 60;
+      if (lang === "zh") {
+        if (minutes <= 0) return `${remainder} 秒`;
+        return remainder ? `${minutes} 分 ${remainder} 秒` : `${minutes} 分钟`;
+      }
+      if (minutes <= 0) return `${remainder}s`;
+      return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+    }
+
+    function setProgress(percent, title, detail, etaText) {
+      const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+      progressArea.hidden = false;
+      progressTitle.textContent = title;
+      progressPercent.textContent = `${safePercent}%`;
+      progressBar.style.width = `${safePercent}%`;
+      progressDetail.textContent = detail;
+      progressEta.textContent = etaText;
+    }
+
+    function startEstimatedProgress(file, pdfMode, lang) {
+      clearInterval(progressTimer);
+      const text = copy[lang];
+      const totalSeconds = estimateDurationSeconds(file, pdfMode);
+      const startedAt = Date.now();
+
+      setProgress(2, text.progressReady, text.progressUploading, `${text.etaPrefix}: ${formatDuration(totalSeconds, lang)}`);
+
+      progressTimer = setInterval(() => {
+        const elapsedSeconds = (Date.now() - startedAt) / 1000;
+        const ratio = Math.min(elapsedSeconds / totalSeconds, 1);
+        const percent = ratio < 0.12
+          ? 8 + ratio * 120
+          : Math.min(92, 22 + Math.pow(ratio, 0.72) * 70);
+        const remainingSeconds = Math.max(0, totalSeconds - elapsedSeconds);
+        const stage = percent < 25
+          ? text.progressUploading
+          : percent < 88
+            ? text.progressProcessing
+            : text.progressFinalizing;
+
+        setProgress(percent, stage, stage, `${text.etaPrefix}: ${formatDuration(remainingSeconds, lang)}`);
+      }, 500);
+    }
+
+    function finishProgress(success, lang) {
+      clearInterval(progressTimer);
+      progressTimer = null;
+      const text = copy[lang];
+      if (success) {
+        setProgress(100, text.progressDone, text.progressFinalizing, text.etaDone);
+      } else {
+        const currentPercent = parseInt(progressPercent.textContent, 10) || 0;
+        setProgress(currentPercent, text.progressFailed, text.failed, "");
+      }
     }
 
     form.addEventListener("submit", async event => {
@@ -227,9 +414,12 @@
       const lang = uiLang.value;
       const text = copy[lang];
       const data = new FormData(form);
+      const selectedFile = fileInput.files[0];
 
       submitBtn.disabled = true;
+      statusText.dataset.busy = "true";
       statusText.textContent = text.working;
+      startEstimatedProgress(selectedFile, data.get("pdf_mode"), lang);
 
       try {
         const response = await fetch(`${API_BASE_URL}/translate`, {
@@ -241,8 +431,21 @@
 
         const blob = await response.blob();
         const disposition = response.headers.get("content-disposition") || "";
-        const match = disposition.match(/filename="?([^"]+)"?/);
-        const filename = match ? match[1] : "translated-file";
+        const encodedMatch = disposition.match(/filename\\*=UTF-8''([^;]+)/i);
+        const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+        const originalName = fileInput.files[0]?.name || "translated-file";
+        const stem = originalName.replace(/\.[^.]+$/, "");
+        const extension = data.get("pdf_mode") === "overlay" && originalName.toLowerCase().endsWith(".pdf")
+          ? ".pdf"
+          : originalName.toLowerCase().endsWith(".pdf")
+            ? ".docx"
+            : originalName.slice(originalName.lastIndexOf("."));
+        const fallbackName = `${stem}-translated${extension}`;
+        const filename = encodedMatch
+          ? decodeURIComponent(encodedMatch[1])
+          : plainMatch
+            ? plainMatch[1]
+            : fallbackName;
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
@@ -252,15 +455,21 @@
         link.remove();
         URL.revokeObjectURL(url);
         statusText.textContent = text.done;
+        finishProgress(true, lang);
       } catch {
         statusText.textContent = text.failed;
+        finishProgress(false, lang);
       } finally {
         submitBtn.disabled = false;
+        delete statusText.dataset.busy;
       }
     });
 
     uiLang.addEventListener("change", () => applyLanguage(uiLang.value));
     applyLanguage("zh");
+    targetSelect.value = "zh";
+    domainSelect.value = "engineering";
+    pdfModeSelect.value = "overlay";
   </script>
 </body>
 </html>
