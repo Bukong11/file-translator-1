@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import urllib.error
@@ -344,12 +345,21 @@ def should_translate_pdf_text(text: str) -> bool:
     return True
 
 
-def fitted_font_size(rect: fitz.Rect, text: str) -> float:
-    height_based = max(4.0, min(8.0, rect.height * 0.52))
+def line_rotation(line: dict) -> int:
+    direction = line.get("dir") or (1, 0)
+    angle = math.degrees(math.atan2(direction[1], direction[0]))
+    angle = (angle + 360) % 360
+    nearest = round(angle / 90) * 90
+    return nearest % 360
+
+
+def fitted_font_size(rect: fitz.Rect, text: str, rotation: int = 0) -> float:
+    available_height = rect.width if rotation in {90, 270} else rect.height
+    height_based = max(3.5, min(8.0, available_height * 0.62))
     if len(text) > 120:
-        return max(3.8, min(height_based, 5.2))
+        return max(3.2, min(height_based, 5.0))
     if len(text) > 60:
-        return max(4.0, min(height_based, 6.0))
+        return max(3.4, min(height_based, 5.8))
     return height_based
 
 
@@ -357,33 +367,41 @@ def translate_pdf_overlay(source: Path, target: Path, target_language: str, doma
     document = fitz.open(source)
 
     for page in document:
-        blocks = page.get_text("blocks")
-        for block in blocks:
-            x0, y0, x1, y1, text = block[:5]
-            clean = " ".join(str(text).split())
-            if not should_translate_pdf_text(clean):
+        page_dict = page.get_text("dict")
+        for block in page_dict.get("blocks", []):
+            if block.get("type") != 0:
                 continue
 
-            rect = fitz.Rect(x0, y0, x1, y1)
-            if rect.width < 8 or rect.height < 5:
-                continue
+            for line in block.get("lines", []):
+                text = " ".join(span.get("text", "") for span in line.get("spans", []))
+                clean = " ".join(text.split())
+                if not should_translate_pdf_text(clean):
+                    continue
 
-            translated = translate_text(clean, target_language, domain, terms)
-            if not translated or translated == clean:
-                continue
+                rect = fitz.Rect(line.get("bbox"))
+                rotation = line_rotation(line)
+                min_width = 5 if rotation in {90, 270} else 8
+                min_height = 8 if rotation in {90, 270} else 5
+                if rect.width < min_width or rect.height < min_height:
+                    continue
 
-            cover = rect + (-0.5, -0.4, 0.5, 0.4)
-            page.draw_rect(cover, color=None, fill=(1, 1, 1), overlay=True)
-            page.insert_textbox(
-                rect,
-                translated,
-                fontsize=fitted_font_size(rect, translated),
-                fontname="msyh" if PDF_FONT_FILE else "helv",
-                fontfile=str(PDF_FONT_FILE) if PDF_FONT_FILE else None,
-                color=(0, 0, 0),
-                align=fitz.TEXT_ALIGN_LEFT,
-                overlay=True,
-            )
+                translated = translate_text(clean, target_language, domain, terms)
+                if not translated or translated == clean:
+                    continue
+
+                cover = rect + (-0.6, -0.5, 0.6, 0.5)
+                page.draw_rect(cover, color=None, fill=(1, 1, 1), overlay=True)
+                page.insert_textbox(
+                    rect,
+                    translated,
+                    fontsize=fitted_font_size(rect, translated, rotation),
+                    fontname="msyh" if PDF_FONT_FILE else "helv",
+                    fontfile=str(PDF_FONT_FILE) if PDF_FONT_FILE else None,
+                    color=(0, 0, 0),
+                    align=fitz.TEXT_ALIGN_LEFT,
+                    rotate=rotation,
+                    overlay=True,
+                )
 
     document.save(target, garbage=4, deflate=True)
     document.close()
