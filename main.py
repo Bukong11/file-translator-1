@@ -223,7 +223,7 @@ def translate_text(text: str, target_language: str, domain: str, terms: str) -> 
         return translated
 
     label = LANGUAGE_NAMES.get(target_language, target_language)
-    return f"[{label} translation placeholder] {text}"
+    return f"[{label} translation placeholder]"
 
 
 def translate_docx(source: Path, target: Path, target_language: str, domain: str, terms: str) -> None:
@@ -345,6 +345,13 @@ def should_translate_pdf_text(text: str) -> bool:
     return True
 
 
+def is_protected_drawing_table_area(page: fitz.Page, rect: fitz.Rect) -> bool:
+    # Engineering drawings usually keep BOM, title block, revision table, item,
+    # material, date, and signature fields in the lower band. These small cells
+    # often cannot fit translated text, so preserve them exactly.
+    return rect.y0 >= page.rect.height * 0.70
+
+
 def line_rotation(line: dict, rect: fitz.Rect) -> int:
     if rect.width >= rect.height * 1.4:
         return 0
@@ -372,11 +379,122 @@ def fitted_font_size(rect: fitz.Rect, text: str, rotation: int = 0) -> float:
     return height_based
 
 
+def vertical_overlap(a: fitz.Rect, b: fitz.Rect) -> float:
+    overlap = max(0.0, min(a.y1, b.y1) - max(a.y0, b.y0))
+    return overlap / max(1.0, min(a.height, b.height))
+
+
+def horizontal_safe_right_limit(page: fitz.Page, rect: fitz.Rect) -> float:
+    search_band = fitz.Rect(rect.x0, rect.y0 - 4, page.rect.width - 12, rect.y1 + 4)
+    right_limit = page.rect.width - 12
+
+    for drawing in page.get_drawings():
+        drawing_rect = drawing.get("rect")
+        if not drawing_rect:
+            continue
+        obstacle = fitz.Rect(drawing_rect)
+        if obstacle.x0 <= rect.x1 + 8:
+            continue
+        if vertical_overlap(search_band, obstacle) >= 0.15:
+            right_limit = min(right_limit, obstacle.x0 - 8)
+
+    for word in page.get_text("words"):
+        obstacle = fitz.Rect(word[:4])
+        if obstacle.x0 <= rect.x1 + 8:
+            continue
+        if vertical_overlap(search_band, obstacle) >= 0.40:
+            right_limit = min(right_limit, obstacle.x0 - 8)
+
+    return max(rect.x1, right_limit)
+
+
+def candidate_text_rects(page: fitz.Page, rect: fitz.Rect, rotation: int) -> list[fitz.Rect]:
+    if rotation in {90, 270}:
+        return [rect]
+
+    right_limit = horizontal_safe_right_limit(page, rect)
+    line_height = max(4.0, rect.height + 2.0)
+    return [
+        rect,
+        fitz.Rect(rect.x0, rect.y0 - 1, right_limit, rect.y0 - 1 + line_height),
+        fitz.Rect(rect.x0, rect.y0 - 2, right_limit, rect.y0 - 2 + line_height + 1),
+    ]
+
+
+def choose_text_placement(page: fitz.Page, rect: fitz.Rect, text: str, rotation: int) -> tuple[fitz.Rect, float] | None:
+    fontname = "msyh" if PDF_FONT_FILE else "helv"
+    fontfile = str(PDF_FONT_FILE) if PDF_FONT_FILE else None
+    base_size = fitted_font_size(rect, text, rotation)
+
+    if rotation not in {90, 270}:
+        candidate = candidate_text_rects(page, rect, rotation)[-1]
+        text_width_at_one = max(1.0, fitz.get_text_length(text, fontname="helv", fontsize=1.0))
+        font_size = min(base_size, candidate.width / text_width_at_one * 0.96)
+        return candidate, max(1.35, font_size)
+
+    for candidate in candidate_text_rects(page, rect, rotation):
+        for font_size in (base_size, base_size * 0.9, base_size * 0.78, base_size * 0.64, 2.8, 2.4, 2.0, 1.7):
+            scratch = fitz.open()
+            scratch_page = scratch.new_page(width=page.rect.width, height=page.rect.height)
+            result = scratch_page.insert_textbox(
+                candidate,
+                text,
+                fontsize=font_size,
+                fontname=fontname,
+                fontfile=fontfile,
+                color=(0, 0, 0),
+                align=fitz.TEXT_ALIGN_LEFT,
+                rotate=rotation,
+                overlay=True,
+            )
+            scratch.close()
+            if result >= 0:
+                return candidate, font_size
+
+    return None
+
+
+def fallback_text_placement(page: fitz.Page, rect: fitz.Rect, rotation: int) -> tuple[fitz.Rect, float]:
+    if rotation in {90, 270}:
+        return rect, 2.2
+
+    right_limit = horizontal_safe_right_limit(page, rect)
+    line_height = max(4.0, rect.height + 2.0)
+    fallback_rect = fitz.Rect(rect.x0, rect.y0 - 2, right_limit, rect.y0 - 2 + line_height)
+    return fallback_rect, 1.6
+
+
+def insert_translated_text(page: fitz.Page, rect: fitz.Rect, text: str, rotation: int, font_size: float) -> None:
+    if rotation not in {90, 270}:
+        page.insert_text(
+            fitz.Point(rect.x0, rect.y1 - 1.0),
+            text,
+            fontsize=font_size,
+            fontname="helv",
+            color=(0, 0, 0),
+            overlay=True,
+        )
+        return
+
+    page.insert_textbox(
+        rect,
+        text,
+        fontsize=font_size,
+        fontname="msyh" if PDF_FONT_FILE else "helv",
+        fontfile=str(PDF_FONT_FILE) if PDF_FONT_FILE else None,
+        color=(0, 0, 0),
+        align=fitz.TEXT_ALIGN_LEFT,
+        rotate=rotation,
+        overlay=True,
+    )
+
+
 def translate_pdf_overlay(source: Path, target: Path, target_language: str, domain: str, terms: str) -> None:
     document = fitz.open(source)
 
     for page in document:
         page_dict = page.get_text("dict")
+        page_entries = []
         for block in page_dict.get("blocks", []):
             if block.get("type") != 0:
                 continue
@@ -398,19 +516,18 @@ def translate_pdf_overlay(source: Path, target: Path, target_language: str, doma
                 if not translated or translated == clean:
                     continue
 
-                cover = rect + (-0.6, -0.5, 0.6, 0.5)
-                page.draw_rect(cover, color=None, fill=(1, 1, 1), overlay=True)
-                page.insert_textbox(
-                    rect,
-                    translated,
-                    fontsize=fitted_font_size(rect, translated, rotation),
-                    fontname="msyh" if PDF_FONT_FILE else "helv",
-                    fontfile=str(PDF_FONT_FILE) if PDF_FONT_FILE else None,
-                    color=(0, 0, 0),
-                    align=fitz.TEXT_ALIGN_LEFT,
-                    rotate=rotation,
-                    overlay=True,
-                )
+                placement = choose_text_placement(page, rect, translated, rotation)
+                if not placement:
+                    placement = fallback_text_placement(page, rect, rotation)
+
+                page_entries.append((rect, placement[0], translated, rotation, placement[1]))
+
+        for rect, _, _, _, _ in page_entries:
+            cover = rect + (-0.8, -0.6, 0.8, 0.6)
+            page.draw_rect(cover, color=None, fill=(1, 1, 1), overlay=True)
+
+        for _, placement_rect, translated, rotation, font_size in page_entries:
+            insert_translated_text(page, placement_rect, translated, rotation, font_size)
 
     document.save(target, garbage=4, deflate=True)
     document.close()
