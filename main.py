@@ -26,6 +26,7 @@ WORK_DIR.mkdir(exist_ok=True)
 SUPPORTED_SUFFIXES = {".docx", ".xlsx", ".pdf"}
 OPENAI_API_URL = "https://api.openai.com/v1/responses"
 DEFAULT_OPENAI_MODEL = "gpt-5.5"
+APP_VERSION = "pdf-overlay-v12-single-line-no-overlap"
 LANGUAGE_NAMES = {
     "zh": "Chinese",
     "en": "English",
@@ -537,6 +538,11 @@ def translate_pdf_overlay(source: Path, target: Path, target_language: str, doma
 def health() -> dict[str, str]:
     mode = "openai" if os.getenv("OPENAI_API_KEY", "").strip() else "placeholder"
     return {"status": "ok", "translation_mode": mode}
+
+
+@app.get("/version")
+def version() -> dict[str, str]:
+    return {"version": APP_VERSION}
 
 
 @app.get("/", response_model=None)
